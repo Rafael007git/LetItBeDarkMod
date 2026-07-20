@@ -6,8 +6,8 @@ namespace SWPT_PhotographerLighting
 {
     public enum LightControlMode
     {
-        NaturalWithAutoExposure, // Естественный (с ночным зрением)
-        AbsoluteDarkFixed        // Абсолютная тьма (фиксированный)
+        AutoExposureAdaptation, // Естественное затухание с сохранением автоматической адаптации камеры
+        FixedExposureOverride   // Жесткая фиксация яркости с блокировкой логарифмической адаптации EV
     }
 
     [BepInPlugin("com.lorifel007.letitbedark", "Let It Be Dark", "1.0.0")]
@@ -24,39 +24,40 @@ namespace SWPT_PhotographerLighting
         {
             StaticLogger = Logger;
 
-            // 1. Главный выключатель для фонового света
+            // 1. Главный выключатель контроля окружения
             EnvironmentLightingEnabled = Config.Bind(
                 "1. Environment", "EnableEnvironmentControl", true,
-                "Включить управление фоновым светом локации (если выключено, фон вернется к оригиналу)"
+                "Enable or disable mod control over scene ambient and volumetric lighting. If disabled, environment reverts to vanilla."
             );
 
-            // 2. Выбор режима затемнения
+            // 2. Выбор технического режима экспозиции
             SelectedMode = Config.Bind(
-                "1. Environment", "DarkeningMode", LightControlMode.NaturalWithAutoExposure,
-                "Режим работы: Natural (мягкий, с адаптацией глаза) или Absolute (жесткая фиксация тьмы)"
+                "1. Environment", "DarkeningMode", LightControlMode.AutoExposureAdaptation,
+                "Select HDRP Exposure processing mode: AutoExposureAdaptation (preserves camera adaptation) or FixedExposureOverride (locks EV calculation)."
             );
 
+            // 3. Слайдер интенсивности окружения
             AmbientMultiplier = Config.Bind(
                 "1. Environment", "AmbientMultiplier", 0.40f,
-                new ConfigDescription("Яркость фона (0.0 = Макс. Темнота, 0.8 = 100% Оригинал, 1.0 = Овердрайв)", new AcceptableValueRange<float>(0f, 1f))
+                new ConfigDescription("Global environment intensity multiplier (0.0 = Complete Dark, 0.8 = 100% Vanilla, 1.0 = Overdrive).", new AcceptableValueRange<float>(0f, 1f))
             );
 
-            // Скелетные огни персонажей
+            // 4. Слайдер интенсивности ламп персонажей (работает независимо)
             CharacterLightMultiplier = Config.Bind(
                 "2. Characters", "CharacterLightMultiplier", 0.80f,
-                new ConfigDescription("Встроенный свет персонажей (Работает ВСЕГДА. 0.0 = Выключен, 0.8 = 100% Оригинал)", new AcceptableValueRange<float>(0f, 1f))
+                new ConfigDescription("Intensity multiplier for built-in character lights. Always active. (0.0 = Disabled, 0.8 = 100% Vanilla).", new AcceptableValueRange<float>(0f, 1f))
             );
 
-            // МГНОВЕННАЯ СВЯЗЬ: Обновляем свет строго в момент движения ползунков в меню F1
+            // Мгновенная реакция рендерера на изменение слайдеров в меню BepInEx (F1)
             EnvironmentLightingEnabled.SettingChanged += (sender, args) => HdrpLightingManager.UpdateAllLighting();
             SelectedMode.SettingChanged += (sender, args) => HdrpLightingManager.UpdateAllLighting();
             AmbientMultiplier.SettingChanged += (sender, args) => HdrpLightingManager.UpdateAllLighting();
             CharacterLightMultiplier.SettingChanged += (sender, args) => HdrpLightingManager.UpdateAllLighting();
 
-            StaticLogger.LogInfo("Let It Be Dark v1.3.1 (Event-Driven Clean Build) successfully initialized!");
+            StaticLogger.LogInfo("Let It Be Dark v1.0.0 (Release Build) successfully initialized!");
         }
 
-        // Автоматический сброс кэша и перерасчет света при переходе на новую карту/сцену
+        // Автоматический сброс графического кэша при переходе между игровыми сценами
         private void OnLevelWasLoaded(int level)
         {
             HdrpLightingManager.ResetCacheForNewScene();

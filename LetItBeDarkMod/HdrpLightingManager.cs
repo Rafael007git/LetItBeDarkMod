@@ -130,7 +130,7 @@ namespace SWPT_PhotographerLighting
                     originalVolumeWeights[volume] = volume.weight;
                 }
 
-                if (Plugin.SelectedMode.Value == LightControlMode.AbsoluteDarkFixed)
+                if (Plugin.SelectedMode.Value == LightControlMode.FixedExposureOverride)
                     volume.weight = originalVolumeWeights[volume] * mult;
                 else
                     volume.weight = originalVolumeWeights[volume]; // В естественном режиме сохраняем полный вес профиля
@@ -145,7 +145,7 @@ namespace SWPT_PhotographerLighting
                     if (!originalProfileSettings.ContainsKey(fixedKey)) originalProfileSettings[fixedKey] = exposure.fixedExposure.value;
 
                     // РЕЖИМ 1: Естественный (Ваш любимый вариант с авто-экспозицией)
-                    if (Plugin.SelectedMode.Value == LightControlMode.NaturalWithAutoExposure)
+                    if (Plugin.SelectedMode.Value == LightControlMode.AutoExposureAdaptation)
                     {
                         exposure.mode.value = (ExposureMode)originalEnumSettings[modeKey]; // Возвращаем авто-режим игры
 
@@ -186,7 +186,7 @@ namespace SWPT_PhotographerLighting
                 // 4. ГАСИМ ТУМАН (Только в режиме абсолютной тьмы, чтобы не светился серым)
                 if (volume.profile.TryGet<Fog>(out var fog))
                 {
-                    if (Plugin.SelectedMode.Value == LightControlMode.AbsoluteDarkFixed)
+                    if (Plugin.SelectedMode.Value == LightControlMode.FixedExposureOverride)
                         fog.active = mult > 0.01f;
                     else
                         fog.active = true; // В естественном режиме туман плавно подстроится сам
