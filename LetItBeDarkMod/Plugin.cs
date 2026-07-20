@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace SWPT_PhotographerLighting
 {
-    [BepInPlugin("com.photomode.advancedlighting", "Let It Be Dark", "1.2.3")]
+    [BepInPlugin("com.photomode.advancedlighting", "Let It Be Dark", "0.0.1")]
     public class Plugin : BaseUnityPlugin
     {
         public static ConfigEntry<float> AmbientMultiplier;
@@ -101,9 +101,7 @@ namespace SWPT_PhotographerLighting
         {
             var logger = BepInEx.Logging.Logger.CreateLogSource("Dark_Ambient");
 
-            logger.LogInfo($"Текущий режим AmbientMode до изменения: {RenderSettings.ambientMode}");
-            logger.LogInfo($"Текущий цвет RenderSettings.ambientLight: {RenderSettings.ambientLight}");
-
+            // Переключаем режим в плоский цвет
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
 
             if (!isOriginalAmbientSaved)
@@ -116,8 +114,17 @@ namespace SWPT_PhotographerLighting
             float mult = CalculatePhotoMultiplier(AmbientMultiplier.Value);
             RenderSettings.ambientLight = originalAmbientColor * mult;
 
-            logger.LogInfo($"Установлен новый цвет ambientLight: {RenderSettings.ambientLight} (Мультипликатор: {mult})");
+            // --- НАШЕ РЕШЕНИЕ ДЛЯ РЕЖИМА SKYBOX ---
+            // Намертво душим интенсивность свечения неба. 
+            // Если мультипликатор равен 0 (тьма), интенсивность неба станет 0, и сцена железно погрузится во мрак!
+            RenderSettings.ambientIntensity = mult;
+
+            // На всякий случай также приглушаем глобальные отражения неба, чтобы не было "стеклянного" блеска в темноте
+            RenderSettings.reflectionIntensity = mult;
+
+            logger.LogInfo($"Установлен новый цвет ambientLight: {RenderSettings.ambientLight} | Интенсивность неба: {RenderSettings.ambientIntensity}");
         }
+
 
         public static void ApplyCharacterLights()
         {
