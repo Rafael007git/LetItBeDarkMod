@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace SWPT_PhotographerLighting
 {
-    [BepInPlugin("com.photomode.advancedlighting", "Let It Be Dark", "1.2.1")]
+    [BepInPlugin("com.photomode.advancedlighting", "Let It Be Dark", "1.2.3")]
     public class Plugin : BaseUnityPlugin
     {
         public static ConfigEntry<float> AmbientMultiplier;
@@ -24,50 +24,63 @@ namespace SWPT_PhotographerLighting
             "Point Light (1)", "Point Light (5)", "Point Light (9)"
         };
 
+        // Статический источник логов для безопасного вызова из любых методов
+        private static BepInEx.Logging.ManualLogSource StaticLogger;
+
         private void Awake()
         {
+            StaticLogger = Logger;
+
             AmbientMultiplier = Config.Bind(
                 "1. Environment", "AmbientMultiplier", 0.40f,
-                new ConfigDescription("Глобальный свет локации (0.0 = Тьма, 0.4 = 25%, 0.8 = 100% Оригинал, 1.0 = 300% Максимум)", new AcceptableValueRange<float>(0f, 1f))
+                new ConfigDescription("Глобальный свет локации", new AcceptableValueRange<float>(0f, 1f))
             );
 
             CharacterLightMultiplier = Config.Bind(
                 "2. Characters", "CharacterLightMultiplier", 0.80f,
-                new ConfigDescription("Встроенный свет персонажей (0.0 = Выключен, 0.4 = 25%, 0.8 = 100% Оригинал, 1.0 = 300% Максимум)", new AcceptableValueRange<float>(0f, 1f))
+                new ConfigDescription("Встроенный свет персонажей", new AcceptableValueRange<float>(0f, 1f))
             );
 
             RefreshKey = Config.Bind(
-                "3. Controls", "RefreshKey", KeyCode.F10, "Мгновенное обновление сцены без открытия меню"
+                "3. Controls", "RefreshKey", KeyCode.F10, "Мгновенное обновление сцены"
             );
 
-            Logger.LogInfo("Let It Be Dark v1.2.1 successfully loaded and compiled!");
+            // ЖЕЛЕЗНЫЙ ФИКС: Строгое привязывание статического делегата с полными пространствами имен Unity
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
+
+            StaticLogger.LogInfo("Let It Be Dark v1.2.3 successfully loaded and patched!");
+        }
+
+        private void OnDestroy()
+        {
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
         private void Update()
         {
-            // Считываем нажатие клавиши обновления
             if (UnityEngine.Input.GetKeyDown(RefreshKey.Value))
             {
-                Logger.LogInfo("[Let It Be Dark] Ручное обновление освещения по горячей клавише...");
+                StaticLogger.LogInfo("[Let It Be Dark] Нажата кнопка F10. Запуск диагностики...");
                 UpdateAllLighting();
             }
         }
 
-        // НАДЕЖНЫЙ ОБХОДНОЙ ПУТЬ: Родной метод BepInEx / Unity для отслеживания смены сцен.
-        // Он железно компилируется на любой версии Unity и не требует капризных делегатов!
-        private void OnLevelWasLoaded(int level)
+        // ЖЕЛЕЗНЫЙ ФИКС SIGNATURE MATCHING: Метод статический, а типы прописаны абсолютно строго
+        private static void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
         {
-            // Сбрасываем кэш оригинального освещения, так как старые лампы уничтожены, а в новой локации — новые настройки
+            if (StaticLogger != null) StaticLogger.LogInfo($"[Let It Be Dark] Сцена загружена: '{scene.name}'. Сбрасываем кэш света.");
+            if (scene.name == "MainMenu") return;
+
             isOriginalAmbientSaved = false;
             originalLightIntensities.Clear();
 
-            // Запускаем плавное обновление света через 1.5 секунды, когда сцена окончательно прогрузится
             StaticCoroutine.Start(DelayLightingUpdate());
         }
 
         private static System.Collections.IEnumerator DelayLightingUpdate()
         {
-            yield return new WaitForSeconds(1.5f);
+            yield return new WaitForSeconds(2.0f); // Задержка 2 сек, пока сцена инициализирует графику
+            if (StaticLogger != null) StaticLogger.LogInfo("[Let It Be Dark] Автоматическое обновление после загрузки сцены...");
             UpdateAllLighting();
         }
 
@@ -80,42 +93,41 @@ namespace SWPT_PhotographerLighting
         private static float CalculatePhotoMultiplier(float configValue)
         {
             float x = Mathf.Clamp01(configValue);
-            if (x <= 0.8f)
-            {
-                float t = x / 0.8f;
-                return t * t;
-            }
-            else
-            {
-                float t = (x - 0.8f) / 0.2f;
-                return 1.0f + t * 2.0f;
-            }
+            if (x <= 0.8f) return (x / 0.8f) * (x / 0.8f);
+            return 1.0f + ((x - 0.8f) / 0.2f) * 2.0f;
         }
 
         public static void ApplyCustomAmbient()
         {
+            var logger = BepInEx.Logging.Logger.CreateLogSource("Dark_Ambient");
+
+            logger.LogInfo($"Текущий режим AmbientMode до изменения: {RenderSettings.ambientMode}");
+            logger.LogInfo($"Текущий цвет RenderSettings.ambientLight: {RenderSettings.ambientLight}");
+
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
 
             if (!isOriginalAmbientSaved)
             {
                 originalAmbientColor = (RenderSettings.ambientLight == Color.clear) ? new Color(0.2f, 0.2f, 0.2f, 1f) : RenderSettings.ambientLight;
                 isOriginalAmbientSaved = true;
+                logger.LogInfo($"Закеширован оригинальный AmbientColor: {originalAmbientColor}");
             }
 
-            RenderSettings.ambientLight = originalAmbientColor * CalculatePhotoMultiplier(AmbientMultiplier.Value);
+            float mult = CalculatePhotoMultiplier(AmbientMultiplier.Value);
+            RenderSettings.ambientLight = originalAmbientColor * mult;
+
+            logger.LogInfo($"Установлен новый цвет ambientLight: {RenderSettings.ambientLight} (Мультипликатор: {mult})");
         }
 
         public static void ApplyCharacterLights()
         {
-            var aliveLights = new Dictionary<Light, float>();
-            foreach (var kvp in originalLightIntensities)
-            {
-                if (kvp.Key != null) aliveLights[kvp.Key] = kvp.Value;
-            }
-            originalLightIntensities = aliveLights;
+            var logger = BepInEx.Logging.Logger.CreateLogSource("Dark_Lights");
 
             Light[] allLights = GameObject.FindObjectsOfType<Light>();
+            logger.LogInfo($"Всего физических источников света на сцене найдено: {allLights.Length}");
+
             float finalCharMult = CalculatePhotoMultiplier(CharacterLightMultiplier.Value);
+            int matchedLightsCount = 0;
 
             foreach (Light light in allLights)
             {
@@ -135,14 +147,18 @@ namespace SWPT_PhotographerLighting
 
                 if (isCharacterLight)
                 {
+                    matchedLightsCount++;
                     if (!originalLightIntensities.ContainsKey(light))
                     {
                         originalLightIntensities[light] = light.intensity;
                     }
 
                     light.intensity = originalLightIntensities[light] * finalCharMult;
+                    logger.LogInfo($"Изменена лампа персонажа: '{lightName}' | Новая Интенсивность: {light.intensity} (Было: {originalLightIntensities[light]})");
                 }
             }
+
+            logger.LogInfo($"Изменено ламп персонажей под конфиг: {matchedLightsCount}");
         }
     }
 
