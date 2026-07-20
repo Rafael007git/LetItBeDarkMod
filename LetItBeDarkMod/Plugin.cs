@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace SWPT_PhotographerLighting
 {
-    [BepInPlugin("com.photomode.advancedlighting", "Let It Be Dark", "0.0.1")]
+    [BepInPlugin("com.photomode.advancedlighting", "Let It Be Dark", "1.2.5")]
     public class Plugin : BaseUnityPlugin
     {
         public static ConfigEntry<float> AmbientMultiplier;
@@ -16,15 +16,14 @@ namespace SWPT_PhotographerLighting
         private static bool isOriginalAmbientSaved = false;
 
         private static Dictionary<Light, float> originalLightIntensities = new Dictionary<Light, float>();
+        private static Dictionary<Component, float> originalVolumeWeights = new Dictionary<Component, float>();
 
-        // Локальный автономный справочник костей и ламп
         private static readonly HashSet<string> CharacterLightRegistry = new HashSet<string>
         {
             "Player", "Kira", "Genesis8Female", "hip", "pelvis", "head",
             "Point Light (1)", "Point Light (5)", "Point Light (9)"
         };
 
-        // Статический источник логов для безопасного вызова из любых методов
         private static BepInEx.Logging.ManualLogSource StaticLogger;
 
         private void Awake()
@@ -45,42 +44,38 @@ namespace SWPT_PhotographerLighting
                 "3. Controls", "RefreshKey", KeyCode.F10, "Мгновенное обновление сцены"
             );
 
-            // ЖЕЛЕЗНЫЙ ФИКС: Строгое привязывание статического делегата с полными пространствами имен Unity
-            UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
+            // Мгновенное обновление при движении ползунков в меню F1
+            AmbientMultiplier.SettingChanged += (sender, args) => UpdateAllLighting();
+            CharacterLightMultiplier.SettingChanged += (sender, args) => UpdateAllLighting();
 
-            StaticLogger.LogInfo("Let It Be Dark v1.2.3 successfully loaded and patched!");
-        }
-
-        private void OnDestroy()
-        {
-            UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
+            StaticLogger.LogInfo("Let It Be Dark v1.2.5 successfully loaded!");
         }
 
         private void Update()
         {
             if (UnityEngine.Input.GetKeyDown(RefreshKey.Value))
             {
-                StaticLogger.LogInfo("[Let It Be Dark] Нажата кнопка F10. Запуск диагностики...");
+                StaticLogger.LogInfo("[Let It Be Dark] Ручное обновление по F10...");
                 UpdateAllLighting();
             }
         }
 
-        // ЖЕЛЕЗНЫЙ ФИКС SIGNATURE MATCHING: Метод статический, а типы прописаны абсолютно строго
-        private static void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+        // НАДЕЖНЫЙ И ЧИСТЫЙ МЕТОД: Вызывается Unity автоматически при загрузке новой карты.
+        // Больше никаких ошибок компиляции с делегатами SceneManager!
+        private void OnLevelWasLoaded(int level)
         {
-            if (StaticLogger != null) StaticLogger.LogInfo($"[Let It Be Dark] Сцена загружена: '{scene.name}'. Сбрасываем кэш света.");
-            if (scene.name == "MainMenu") return;
+            if (StaticLogger != null) StaticLogger.LogInfo($"[Let It Be Dark] Новая сцена загружена (Индекс: {level}). Сбрасываем кэш света.");
 
             isOriginalAmbientSaved = false;
             originalLightIntensities.Clear();
+            originalVolumeWeights.Clear();
 
             StaticCoroutine.Start(DelayLightingUpdate());
         }
 
         private static System.Collections.IEnumerator DelayLightingUpdate()
         {
-            yield return new WaitForSeconds(2.0f); // Задержка 2 сек, пока сцена инициализирует графику
-            if (StaticLogger != null) StaticLogger.LogInfo("[Let It Be Dark] Автоматическое обновление после загрузки сцены...");
+            yield return new WaitForSeconds(2.0f);
             UpdateAllLighting();
         }
 
@@ -88,6 +83,7 @@ namespace SWPT_PhotographerLighting
         {
             ApplyCustomAmbient();
             ApplyCharacterLights();
+            ApplyVolumePostProcessing();
         }
 
         private static float CalculatePhotoMultiplier(float configValue)
@@ -99,42 +95,31 @@ namespace SWPT_PhotographerLighting
 
         public static void ApplyCustomAmbient()
         {
-            var logger = BepInEx.Logging.Logger.CreateLogSource("Dark_Ambient");
-
-            // Переключаем режим в плоский цвет
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
 
             if (!isOriginalAmbientSaved)
             {
                 originalAmbientColor = (RenderSettings.ambientLight == Color.clear) ? new Color(0.2f, 0.2f, 0.2f, 1f) : RenderSettings.ambientLight;
                 isOriginalAmbientSaved = true;
-                logger.LogInfo($"Закеширован оригинальный AmbientColor: {originalAmbientColor}");
             }
 
             float mult = CalculatePhotoMultiplier(AmbientMultiplier.Value);
             RenderSettings.ambientLight = originalAmbientColor * mult;
-
-            // --- НАШЕ РЕШЕНИЕ ДЛЯ РЕЖИМА SKYBOX ---
-            // Намертво душим интенсивность свечения неба. 
-            // Если мультипликатор равен 0 (тьма), интенсивность неба станет 0, и сцена железно погрузится во мрак!
             RenderSettings.ambientIntensity = mult;
-
-            // На всякий случай также приглушаем глобальные отражения неба, чтобы не было "стеклянного" блеска в темноте
             RenderSettings.reflectionIntensity = mult;
-
-            logger.LogInfo($"Установлен новый цвет ambientLight: {RenderSettings.ambientLight} | Интенсивность неба: {RenderSettings.ambientIntensity}");
         }
-
 
         public static void ApplyCharacterLights()
         {
-            var logger = BepInEx.Logging.Logger.CreateLogSource("Dark_Lights");
+            var aliveLights = new Dictionary<Light, float>();
+            foreach (var kvp in originalLightIntensities)
+            {
+                if (kvp.Key != null) aliveLights[kvp.Key] = kvp.Value;
+            }
+            originalLightIntensities = aliveLights;
 
             Light[] allLights = GameObject.FindObjectsOfType<Light>();
-            logger.LogInfo($"Всего физических источников света на сцене найдено: {allLights.Length}");
-
             float finalCharMult = CalculatePhotoMultiplier(CharacterLightMultiplier.Value);
-            int matchedLightsCount = 0;
 
             foreach (Light light in allLights)
             {
@@ -154,18 +139,57 @@ namespace SWPT_PhotographerLighting
 
                 if (isCharacterLight)
                 {
-                    matchedLightsCount++;
                     if (!originalLightIntensities.ContainsKey(light))
                     {
                         originalLightIntensities[light] = light.intensity;
                     }
 
                     light.intensity = originalLightIntensities[light] * finalCharMult;
-                    logger.LogInfo($"Изменена лампа персонажа: '{lightName}' | Новая Интенсивность: {light.intensity} (Было: {originalLightIntensities[light]})");
+                }
+            }
+        }
+
+        public static void ApplyVolumePostProcessing()
+        {
+            float mult = CalculatePhotoMultiplier(AmbientMultiplier.Value);
+
+            var aliveVolumes = new Dictionary<Component, float>();
+            foreach (var kvp in originalVolumeWeights)
+            {
+                if (kvp.Key != null) aliveVolumes[kvp.Key] = kvp.Value;
+            }
+            originalVolumeWeights = aliveVolumes;
+
+            Component[] allComponents = GameObject.FindObjectsOfType<Component>();
+            int volumeCount = 0;
+
+            foreach (var comp in allComponents)
+            {
+                if (comp == null) continue;
+
+                string typeName = comp.GetType().Name;
+
+                if (typeName == "Volume")
+                {
+                    volumeCount++;
+                    var weightProperty = comp.GetType().GetProperty("weight");
+                    if (weightProperty != null)
+                    {
+                        if (!originalVolumeWeights.ContainsKey(comp))
+                        {
+                            originalVolumeWeights[comp] = (float)weightProperty.GetValue(comp);
+                        }
+
+                        float newWeight = originalVolumeWeights[comp] * mult;
+                        weightProperty.SetValue(comp, newWeight);
+                    }
                 }
             }
 
-            logger.LogInfo($"Изменено ламп персонажей под конфиг: {matchedLightsCount}");
+            if (volumeCount > 0)
+            {
+                DynamicGI.UpdateEnvironment();
+            }
         }
     }
 
