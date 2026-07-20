@@ -18,8 +18,7 @@ namespace SWPT_PhotographerLighting
 
         private static Dictionary<Light, float> originalLightIntensities = new Dictionary<Light, float>();
 
-        // СКОПИРОВАННЫЙ И ОПТИМИЗИРОВАННЫЙ ФРАГМЕНТ СПРАВОЧНИКА
-        // Сюда входят только те имена, которые могут быть у источников света персонажей или их прямых родителей
+        // Локальный автономный справочник костей и ламп
         private static readonly HashSet<string> CharacterLightRegistry = new HashSet<string>
         {
             "Player", "Kira", "Genesis8Female", "hip", "pelvis", "head",
@@ -42,9 +41,10 @@ namespace SWPT_PhotographerLighting
                 "3. Controls", "RefreshKey", KeyCode.F10, "Мгновенное обновление сцены без открытия меню"
             );
 
+            // Привязываем метод без слова static — теперь делегат UnityAction его примет идеально
             SceneManager.sceneLoaded += OnSceneLoaded;
 
-            Logger.LogInfo("Let It Be Dark v1.2.1 successfully loaded with standalone registry!");
+            Logger.LogInfo("Let It Be Dark v1.2.1 successfully loaded and compiled!");
         }
 
         private void OnDestroy()
@@ -54,14 +54,16 @@ namespace SWPT_PhotographerLighting
 
         private void Update()
         {
-            if (Input.GetKeyDown(RefreshKey.Value))
+            // ЖЕСТКИЙ ФИКС: Используем UnityEngine.Input явно, чтобы избежать ошибки CS0103
+            if (UnityEngine.Input.GetKeyDown(RefreshKey.Value))
             {
                 Logger.LogInfo("[Let It Be Dark] Ручное обновление освещения по горячей клавише...");
                 UpdateAllLighting();
             }
         }
 
-        private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        // ЖЕСТКИЙ ФИКС: Убрали static, чтобы метод соответствовал сигнатуре UnityAction
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             if (scene.name == "MainMenu") return;
 
@@ -128,11 +130,8 @@ namespace SWPT_PhotographerLighting
                 if (light == null) continue;
 
                 string lightName = light.gameObject.name;
-
-                // Проверяем имя лампы по нашему встроенному автономному списку
                 bool isCharacterLight = CharacterLightRegistry.Contains(lightName);
 
-                // Быстрая подстраховка: если имя лампы кастомное, но её прямой родитель входит в список костей персонажа
                 if (!isCharacterLight && light.transform.parent != null)
                 {
                     string parentName = light.transform.parent.name;
