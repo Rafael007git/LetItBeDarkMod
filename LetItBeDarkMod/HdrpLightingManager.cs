@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;               // Базовое ядро эффектов Unity
+using UnityEngine.Rendering.HighDefinition; // Полный доступ к классам HDRP!
 
 namespace SWPT_PhotographerLighting
 {
@@ -9,17 +11,17 @@ namespace SWPT_PhotographerLighting
         private static bool isOriginalAmbientSaved = false;
 
         private static Dictionary<Light, float> originalLightIntensities = new Dictionary<Light, float>();
-        private static Dictionary<Component, float> originalVolumeWeights = new Dictionary<Component, float>();
+        private static Dictionary<Volume, float> originalVolumeWeights = new Dictionary<Volume, float>();
         private static Dictionary<string, float> originalProfileSettings = new Dictionary<string, float>();
 
-        // Наш локальный автономный справочник ламп Диорамы и костей персонажей
+        // Локальный автономный справочник ламп Диорамы и костей персонажей
         private static readonly HashSet<string> CharacterLightRegistry = new HashSet<string>
         {
             "Player", "Kira", "Genesis8Female", "hip", "pelvis", "head",
             "Point Light (1)", "Point Light (5)", "Point Light (9)"
         };
 
-        // Полный сброс кэша интенсивностей при загрузке новой сцены
+        // Сброс кэша при загрузке новой локации
         public static void ResetCacheForNewScene()
         {
             isOriginalAmbientSaved = false;
@@ -27,7 +29,7 @@ namespace SWPT_PhotographerLighting
             originalVolumeWeights.Clear();
             originalProfileSettings.Clear();
 
-            // Даем игре 2.0 секунды на прогрузку геометрии и запускаем автоматическое затемнение
+            // Даем сцене 2 секунды на инициализацию и запускаем автоматическое затемнение
             StaticCoroutine.Start(DelayLightingUpdate());
         }
 
@@ -46,7 +48,7 @@ namespace SWPT_PhotographerLighting
             ApplyHdrpVolumePostProcessing();
         }
 
-        // Математическая функция плавного нелинейного ухода во тьму (до 0.8) и линейного разгона (после 0.8)
+        // Функция плавного нелинейного ухода во тьму (до 0.8) и линейного разгона (после 0.8)
         private static float CalculatePhotoMultiplier(float configValue)
         {
             float x = Mathf.Clamp01(configValue);
@@ -79,10 +81,9 @@ namespace SWPT_PhotographerLighting
             RenderSettings.reflectionIntensity = mult;
         }
 
-        // Точечный гаситель ламп подсветки персонажей по справочнику
+        // Точечный гаситель ламп подсветки персонажей по справочнику Диорамы
         private static void ApplyCharacterLights()
         {
-            // Чистим кэш от уничтоженных ламп при смене сцены
             var aliveLights = new Dictionary<Light, float>();
             foreach (var kvp in originalLightIntensities)
             {
@@ -100,7 +101,6 @@ namespace SWPT_PhotographerLighting
                 string lightName = light.gameObject.name;
                 bool isCharacterLight = CharacterLightRegistry.Contains(lightName);
 
-                // Подстраховка по родительским корневым узлам
                 if (!isCharacterLight && light.transform.parent != null)
                 {
                     string parentName = light.transform.parent.name;
@@ -122,117 +122,103 @@ namespace SWPT_PhotographerLighting
             }
         }
 
-        // Ультимативный взломщик HDRP-эффектов (Физическое небо, Скайбоксы, Экспозиция, Туман)
+        // Чистый и ультимативный взломщик HDRP-эффектов через прямое подключение .dll
         private static void ApplyHdrpVolumePostProcessing()
         {
             var logger = BepInEx.Logging.Logger.CreateLogSource("Dark_HDRP_Killer");
             float mult = CalculatePhotoMultiplier(Plugin.AmbientMultiplier.Value);
 
-            // Чистим кэш Volume-компонентов
-            var aliveVolumes = new Dictionary<Component, float>();
+            // Чистим кэш Volume-компонентов от уничтоженных при смене сцены объектов
+            var aliveVolumes = new Dictionary<Volume, float>();
             foreach (var kvp in originalVolumeWeights)
             {
                 if (kvp.Key != null) aliveVolumes[kvp.Key] = kvp.Value;
             }
             originalVolumeWeights = aliveVolumes;
 
-            Component[] allComponents = GameObject.FindObjectsOfType<Component>();
-            int volumeCount = 0;
+            // Находим строго все Volume на сцене (работает моментально)
+            Volume[] allVolumes = GameObject.FindObjectsOfType<Volume>();
 
-            foreach (var comp in allComponents)
+            foreach (Volume volume in allVolumes)
             {
-                if (comp == null) continue;
+                if (volume == null || volume.profile == null) continue;
 
-                if (comp.GetType().Name == "Volume")
+                // 1. Управляем общим весом влияния Volume на сцену
+                if (!originalVolumeWeights.ContainsKey(volume))
                 {
-                    volumeCount++;
+                    originalVolumeWeights[volume] = volume.weight;
+                }
+                volume.weight = originalVolumeWeights[volume] * mult;
 
-                    // 1. Скручиваем базовый вес влияния данного объема на сцену
-                    var weightProperty = comp.GetType().GetProperty("weight");
-                    if (weightProperty != null)
+                // 2. ЧИСТЫЙ ПЕРЕХВАТ ЭФФЕКТОВ HDRP БЕЗ РЕФЛЕКСИИ
+
+                // БЛОКИРУЕМ АВТОЭКСПОЗИЦИЮ ("НОЧНОЕ ЗРЕНИЕ")
+                if (volume.profile.TryGet<Exposure>(out var exposure))
+                {
+                    string cacheKeyMode = volume.GetInstanceID() + "_ExpMode";
+                    if (!originalProfileSettings.ContainsKey(cacheKeyMode))
                     {
-                        if (!originalVolumeWeights.ContainsKey(comp))
-                        {
-                            originalVolumeWeights[comp] = (float)weightProperty.GetValue(comp);
-                        }
-                        weightProperty.SetValue(comp, originalVolumeWeights[comp] * mult);
+                        // Сохраняем оригинальный режим (enum ExposureMode)
+                        originalProfileSettings[cacheKeyMode] = (float)exposure.mode.value;
                     }
 
-                    // 2. Пробиваемся внутрь профиля Volume (обход защиты HDRP через рефлексию)
-                    var profileProperty = comp.GetType().GetProperty("profile");
-                    if (profileProperty != null)
+                    // Если ползунок темноты опущен ниже 60%, замораживаем чувствительность камеры
+                    if (mult < 0.6f)
                     {
-                        object profileObj = profileProperty.GetValue(comp);
-                        if (profileObj != null)
-                        {
-                            // Извлекаем приватный массив эффектов 'components'
-                            var componentsField = profileObj.GetType().GetField("components", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                            if (componentsField != null)
-                            {
-                                var componentList = componentsField.GetValue(profileObj) as System.Collections.IEnumerable;
-                                if (componentList != null)
-                                {
-                                    foreach (object effect in componentList)
-                                    {
-                                        if (effect == null) continue;
-                                        string effectName = effect.GetType().Name;
-
-                                        // Проверяем, отвечает ли этот HDRP-эффект за фоновую заливку светом
-                                        bool isHdrpLightingEffect = effectName.Contains("Sky") ||
-                                                                    effectName.Contains("Exposure") ||
-                                                                    effectName.Contains("Fog") ||
-                                                                    effectName.Contains("IndirectLightingController") ||
-                                                                    effectName.Contains("AmbientOcclusion");
-
-                                        if (isHdrpLightingEffect)
-                                        {
-                                            // В HDRP интенсивность неба и тумана хранится в полях 'multiplier' или 'intensity'
-                                            var multiplierField = effect.GetType().GetField("multiplier");
-                                            if (multiplierField == null) multiplierField = effect.GetType().GetField("intensity");
-
-                                            if (multiplierField != null)
-                                            {
-                                                object paramObj = multiplierField.GetValue(effect);
-                                                if (paramObj != null)
-                                                {
-                                                    // Все параметры HDRP обернуты в класс VolumeParameter, вытаскиваем свойство 'value'
-                                                    var valueProp = paramObj.GetType().GetProperty("value");
-                                                    if (valueProp != null)
-                                                    {
-                                                        string cacheKey = comp.GetInstanceID() + "_" + effectName;
-                                                        if (!originalProfileSettings.ContainsKey(cacheKey))
-                                                        {
-                                                            originalProfileSettings[cacheKey] = (float)valueProp.GetValue(paramObj);
-                                                        }
-
-                                                        // Физически душим яркость неба/экспозиции HDRP под наш слайдер!
-                                                        float newValue = originalProfileSettings[cacheKey] * mult;
-                                                        valueProp.SetValue(paramObj, newValue);
-                                                        logger.LogInfo($"[HDRP] Компонент {effectName}: яркость успешно скручена до {newValue}");
-                                                    }
-                                                }
-                                            }
-
-                                            // Если слайдер убран в абсолютный ноль, принудительно отключаем эффект
-                                            var activeField = effect.GetType().GetField("active");
-                                            if (activeField != null)
-                                            {
-                                                activeField.SetValue(effect, mult > 0.01f);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        exposure.mode.value = ExposureMode.Fixed; // Фиксируем экспозицию! Камера ослепнет и перестанет высветлять серым
+                        logger.LogInfo($"[HDRP] Экспозиция на {volume.gameObject.name} принудительно зафиксирована.");
                     }
+                    else
+                    {
+                        exposure.mode.value = (ExposureMode)originalProfileSettings[cacheKeyMode]; // Возврат к ванилле игры
+                    }
+
+                    // Плавно приглушаем фиксированное значение яркости, если оно используется
+                    string cacheKeyFixed = volume.GetInstanceID() + "_ExpFixed";
+                    if (!originalProfileSettings.ContainsKey(cacheKeyFixed))
+                    {
+                        originalProfileSettings[cacheKeyFixed] = exposure.fixedExposure.value;
+                    }
+                    exposure.fixedExposure.value = originalProfileSettings[cacheKeyFixed] * mult;
+                }
+
+                // ГАСИМ ФОНОВОЕ НЕБО (ГРАДИЕНТ)
+                if (volume.profile.TryGet<GradientSky>(out var gradientSky))
+                {
+                    string cacheKey = volume.GetInstanceID() + "_GradientSky";
+                    if (!originalProfileSettings.ContainsKey(cacheKey))
+                    {
+                        originalProfileSettings[cacheKey] = gradientSky.multiplier.value;
+                    }
+
+                    gradientSky.multiplier.value = originalProfileSettings[cacheKey] * mult;
+                    gradientSky.active = mult > 0.01f; // Полностью выключаем при нуле
+                    logger.LogInfo($"[HDRP] Небо GradientSky на {volume.gameObject.name} скручено до {gradientSky.multiplier.value}");
+                }
+
+                // ГАСИМ НЕПРЯМОЕ (ФОНОВОЕ) ОСВЕЩЕНИЕ ЛОКАЦИИ
+                if (volume.profile.TryGet<IndirectLightingController>(out var indirectLight))
+                {
+                    string cacheKeyDiffuse = volume.GetInstanceID() + "_IndirectDiff";
+                    if (!originalProfileSettings.ContainsKey(cacheKeyDiffuse))
+                    {
+                        originalProfileSettings[cacheKeyDiffuse] = indirectLight.indirectDiffuseIntensity.value;
+                    }
+
+                    indirectLight.indirectDiffuseIntensity.value = originalProfileSettings[cacheKeyDiffuse] * mult;
+                    indirectLight.active = mult > 0.01f;
+                    logger.LogInfo($"[HDRP] Фоновое освещение IndirectLightingController скручено до {indirectLight.indirectDiffuseIntensity.value}");
+                }
+
+                // ГАСИМ ГЛОБАЛЬНЫЙ ТУМАН HDRP
+                if (volume.profile.TryGet<Fog>(out var fog))
+                {
+                    fog.active = mult > 0.01f;
+                    // Просто отключаем туман в полной темноте, чтобы он не светился серым
                 }
             }
-
-            if (volumeCount > 0)
-            {
-                // Заставляем графический движок Unity HDRP принудительно пересчитать освещение локации
-                DynamicGI.UpdateEnvironment();
-            }
+            // Мгновенно заставляем HDRP-рендерер пересчитать все источники и карты освещения на сцене
+            DynamicGI.UpdateEnvironment();
         }
     }
 }
