@@ -54,6 +54,9 @@
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\She Will Punish Them\She Will Punish Them_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\She Will Punish Them\She Will Punish Them_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+    </Reference>
     <Reference Include="UnityEngine.JSONSerializeModule">
       <HintPath>..\..\..\..\..\..\Program Files (x86)\Steam\steamapps\common\She Will Punish Them\She Will Punish Them_Data\Managed\UnityEngine.JSONSerializeModule.dll</HintPath>
     </Reference>

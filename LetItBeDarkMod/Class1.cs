@@ -2,7 +2,6 @@
 using BepInEx.Configuration;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 namespace SWPT_PhotographerLighting
 {
@@ -41,20 +40,12 @@ namespace SWPT_PhotographerLighting
                 "3. Controls", "RefreshKey", KeyCode.F10, "Мгновенное обновление сцены без открытия меню"
             );
 
-            // Привязываем метод без слова static — теперь делегат UnityAction его примет идеально
-            SceneManager.sceneLoaded += OnSceneLoaded;
-
             Logger.LogInfo("Let It Be Dark v1.2.1 successfully loaded and compiled!");
-        }
-
-        private void OnDestroy()
-        {
-            SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
         private void Update()
         {
-            // ЖЕСТКИЙ ФИКС: Используем UnityEngine.Input явно, чтобы избежать ошибки CS0103
+            // Считываем нажатие клавиши обновления
             if (UnityEngine.Input.GetKeyDown(RefreshKey.Value))
             {
                 Logger.LogInfo("[Let It Be Dark] Ручное обновление освещения по горячей клавише...");
@@ -62,14 +53,15 @@ namespace SWPT_PhotographerLighting
             }
         }
 
-        // ЖЕСТКИЙ ФИКС: Убрали static, чтобы метод соответствовал сигнатуре UnityAction
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        // НАДЕЖНЫЙ ОБХОДНОЙ ПУТЬ: Родной метод BepInEx / Unity для отслеживания смены сцен.
+        // Он железно компилируется на любой версии Unity и не требует капризных делегатов!
+        private void OnLevelWasLoaded(int level)
         {
-            if (scene.name == "MainMenu") return;
-
+            // Сбрасываем кэш оригинального освещения, так как старые лампы уничтожены, а в новой локации — новые настройки
             isOriginalAmbientSaved = false;
             originalLightIntensities.Clear();
 
+            // Запускаем плавное обновление света через 1.5 секунды, когда сцена окончательно прогрузится
             StaticCoroutine.Start(DelayLightingUpdate());
         }
 
