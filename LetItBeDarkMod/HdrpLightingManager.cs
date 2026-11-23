@@ -20,6 +20,8 @@ namespace SWPT_PhotographerLighting
             "Player", "Kira", "Genesis8Female", "hip", "pelvis", "head",
             "Point Light (1)", "Point Light (5)", "Point Light (9)"
         };
+        private static System.Reflection.MethodInfo _mmorphScaleMethod = null;
+        private static bool _mmorphReflectionChecked = false;
 
         public static void ResetCacheForNewScene()
         {
@@ -74,45 +76,6 @@ namespace SWPT_PhotographerLighting
             RenderSettings.ambientLight = originalAmbientColor * mult;
             RenderSettings.ambientIntensity = mult;
             RenderSettings.reflectionIntensity = mult;
-        }
-
-        private static void ApplyCharacterLights()
-        {
-            var aliveLights = new Dictionary<Light, float>();
-            foreach (var kvp in originalLightIntensities)
-            {
-                if (kvp.Key != null) aliveLights[kvp.Key] = kvp.Value;
-            }
-            originalLightIntensities = aliveLights;
-
-            Light[] allLights = GameObject.FindObjectsOfType<Light>();
-            float finalCharMult = CalculatePhotoMultiplier(Plugin.CharacterLightMultiplier.Value);
-
-            foreach (Light light in allLights)
-            {
-                if (light == null) continue;
-
-                string lightName = light.gameObject.name;
-                bool isCharacterLight = CharacterLightRegistry.Contains(lightName);
-
-                if (!isCharacterLight && light.transform.parent != null)
-                {
-                    string parentName = light.transform.parent.name;
-                    if (CharacterLightRegistry.Contains(parentName) || parentName.ToLower().Contains("kira") || parentName.ToLower().Contains("player"))
-                    {
-                        isCharacterLight = true;
-                    }
-                }
-
-                if (isCharacterLight)
-                {
-                    if (!originalLightIntensities.ContainsKey(light))
-                    {
-                        originalLightIntensities[light] = light.intensity;
-                    }
-                    light.intensity = originalLightIntensities[light] * finalCharMult;
-                }
-            }
         }
 
         private static void ApplyHdrpVolumePostProcessing()
@@ -242,5 +205,81 @@ namespace SWPT_PhotographerLighting
 
             DynamicGI.UpdateEnvironment();
         }
+
+        private static void ApplyCharacterLights()
+        {
+            var aliveLights = new Dictionary<Light, float>();
+            foreach (var kvp in originalLightIntensities)
+            {
+                if (kvp.Key != null) aliveLights[kvp.Key] = kvp.Value;
+            }
+            originalLightIntensities = aliveLights;
+
+            Light[] allLights = GameObject.FindObjectsOfType<Light>();
+            float finalCharMult = CalculatePhotoMultiplier(Plugin.CharacterLightMultiplier.Value);
+
+            foreach (Light light in allLights)
+            {
+                if (light == null) continue;
+
+                string lightName = light.gameObject.name;
+                bool isCharacterLight = CharacterLightRegistry.Contains(lightName);
+
+                if (!isCharacterLight && light.transform.parent != null)
+                {
+                    string parentName = light.transform.parent.name;
+                    if (CharacterLightRegistry.Contains(parentName) || parentName.ToLower().Contains("kira") || parentName.ToLower().Contains("player"))
+                    {
+                        isCharacterLight = true;
+                    }
+                }
+
+                if (isCharacterLight)
+                {
+                    if (!originalLightIntensities.ContainsKey(light))
+                    {
+                        originalLightIntensities[light] = light.intensity;
+                    }
+                    light.intensity = originalLightIntensities[light] * finalCharMult;
+                }
+            }
+        }
+
+        // Публичный метод для мягкой интеграции с MMorphFix (возвращает текущий множитель слайдера персонажей)
+        public static float GetEffectiveCharacterLightMultiplier()
+        {
+            if (Plugin.CharacterLightMultiplier == null) return 1.0f;
+            return CalculatePhotoMultiplier(Plugin.CharacterLightMultiplier.Value);
+        }
+
+        private static float GetExternalScaleMultiplier(Transform lightTransform)
+        {
+            if (!_mmorphReflectionChecked)
+            {
+                _mmorphReflectionChecked = true;
+                try
+                {
+                    var fixType = HarmonyLib.AccessTools.TypeByName("MMorphFix.AnatomicalLightFix");
+                    if (fixType != null)
+                        _mmorphScaleMethod = HarmonyLib.AccessTools.Method(fixType, "GetScaleLightMultiplier", new[] { typeof(GameObject) });
+                }
+                catch { _mmorphScaleMethod = null; }
+            }
+
+            if (_mmorphScaleMethod == null || lightTransform == null) return 1.0f;
+
+            try
+            {
+                // Поднимаемся к корню персонажа (где висит CharacterCustomization)
+                var cc = lightTransform.GetComponentInParent<CharacterCustomization>();
+                GameObject rootObj = cc != null ? cc.gameObject : lightTransform.root.gameObject;
+                return (float)_mmorphScaleMethod.Invoke(null, new object[] { rootObj });
+            }
+            catch
+            {
+                return 1.0f;
+            }
+        }
+
     }
 }

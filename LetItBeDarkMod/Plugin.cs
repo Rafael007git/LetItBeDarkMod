@@ -10,7 +10,7 @@ namespace SWPT_PhotographerLighting
         FixedExposureOverride   // Жесткая фиксация яркости с блокировкой логарифмической адаптации EV
     }
 
-    [BepInPlugin("com.lorifel007.letitbedark", "Let It Be Dark", "1.0.0")]
+    [BepInPlugin("com.lorifel007.letitbedark", "Let It Be Dark", "1.0.1")]
     public class Plugin : BaseUnityPlugin
     {
         public static ConfigEntry<bool> EnvironmentLightingEnabled;
